@@ -6,6 +6,7 @@
 #define NUM_ROWS 10   // Example number of rows
 #define NUM_COLS 10   // Example number of columns
 #define NUM_THREADS 4 // Example number of threads
+#define BLOCK_SIZE 256 // Example block size
 
 // Function to initialize matrices with random values
 void initializeMatrix(float *matrix, int rows, int cols)
@@ -40,7 +41,7 @@ void initializeRowIndx(int *rowIndx, int rows, int nnz)
 // Kernel to perform the initial vector multiplication, exponential, and summation
 __global__ void computeMatrixWAndSum(
     float *K, float *Q, float *W, float *V, int *row, int *col,
-    int NNZ, int *sum, int numRows, int numCols, int p)
+    int *sum, int numRows, int numCols, int p)
 {
 
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -79,7 +80,6 @@ __global__ void computeFinalOutput(
     int blockID = blockIdx.x;
     int tid = threadIdx.x;
 
-    int BLOCK_SIZE = 256;
     int nnzPerThread = (nnzPerRow + BLOCK_SIZE - 1) / BLOCK_SIZE; // Number of non-zeros per thread
     int T = tid * nnzPerThread;
     int r = rowIndx[blockID] + T;
@@ -136,7 +136,7 @@ __global__ void computeFinalOutput(
 int main()
 {
     // Allocate host memory
-    float *K, *Q, *V, *Adj, *R;
+    float *K, *Q, *V, *Adj, *R, *sum;
     int *row, *col, *rowIndx;
 
     // Allocate matrices and arrays on the host
@@ -148,6 +148,7 @@ int main()
     row = (int *)malloc(NNZ * sizeof(int));
     col = (int *)malloc(NNZ * sizeof(int));
     rowIndx = (int *)malloc((NUM_ROWS + 1) * sizeof(int));
+    sum = (float *)malloc(NUM_ROWS * sizeof(float));
 
     // Initialize matrices with random values
     initializeMatrix(K, NUM_ROWS, NUM_COLS);
@@ -189,7 +190,7 @@ int main()
 
     // Launch kernels
     computeMatrixWAndSum<<<gridDim, blockDim>>>(
-        d_K, d_Q, d_W, d_V, d_row, d_col, NNZ, d_sum, NUM_ROWS, NUM_COLS, NUM_THREADS);
+        d_K, d_Q, d_W, d_V, d_row, d_col, d_sum, NUM_ROWS, NUM_COLS, NUM_THREADS);
 
     // Use a shared memory size that fits nnzPerThread of W and Vout
     int nnzPerRow = NNZ / NUM_THREADS;
