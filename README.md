@@ -21,6 +21,10 @@ You'll notice that setup.py points to the *.cpp and *.cu file and gives the modu
 
 Please use mine as a template, but for further info you can refer to: https://pytorch.org/tutorials/advanced/cpp_extension.html
 
+To compile (for all CWRU HPC GPU architectures), please run the following:
+
+- TORCH_CUDA_ARCH_LIST="6.0 7.0 7.5 8.0" python setup.py install
+
 Once you have compiled your example, please use the testing script located in /verification/ to verify that your output matches what PyTorch outputs. You will need to import your own function and call it as well to verify. Please make sure that you are using the MATH backend (what should be uncommented within the code).
 
 Please note that the verification process is done with fully dense matrices to verify that our process exactly matches that of attention.
