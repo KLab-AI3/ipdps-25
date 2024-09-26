@@ -130,10 +130,10 @@ __global__ void spfa_csr_cuda_forward_kernel(
       scalar_t acc = 0.0;
 
       for (int i = 0; i < Q.size(1); i++) {
-        acc += Q_shared[i] * K_shared[(threadIdx.x * maskElePerIter) + i];
+        acc += Q_shared[i] * K_shared[(Q.size(1) * threadIdx.x) + i];
       }
 
-      W_val_shared[threadIdx.x] = acc / sqrt(Q.size(1));
+      W_val_shared[threadIdx.x] = acc / sqrt((float)Q.size(1));
     }
 
     __syncthreads();
