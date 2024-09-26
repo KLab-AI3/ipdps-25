@@ -35,6 +35,11 @@ mask = torch.rand((Q, Q), device = device, dtype = data_type) < DENSE_LEVEL
 
 # Clone the mask.
 mask_2 = torch.clone(mask)
+mask_3 = torch.clone(mask)
+
+# Convert the PyTorch mask to float to use 
+# mask = mask.type(torch.float32)
+# mask = torch.where(mask == 1.0, 0.0, -float("inf"))
 
 # Calculate the PyTorch attention result.
 # with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
@@ -65,8 +70,8 @@ print("Max difference from PyTorch (SPFA-CSR):", torch.max(o_csr - torch_out))
 print("Min difference from PyTorch (SPFA-CSR):", torch.min(o_csr - torch_out))
 
 # NOTE: Restrict the mask to int32
-mask_2 = mask_2.type(data_type)
-coo_mask = mask_2.to_sparse_coo()
+mask_3 = mask_3.type(data_type)
+coo_mask = mask_3.to_sparse_coo()
 w_row_ind = coo_mask.indices()[0].type(torch.uint64)
 w_col_ind = coo_mask.indices()[1].type(torch.uint32)
 w_val = coo_mask.values()
