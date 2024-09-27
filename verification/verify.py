@@ -1,5 +1,6 @@
 import torch
 from torch.nn.attention import SDPBackend, sdpa_kernel
+import spfa_bsr
 import spfa_csr
 import spfa_coo
 import spfa_local
@@ -37,6 +38,7 @@ mask = torch.rand((Q, Q), device = device, dtype = data_type) < DENSE_LEVEL
 # Clone the mask.
 mask_2 = torch.clone(mask)
 mask_3 = torch.clone(mask)
+mask_4 = torch.clone(mask)
 
 # Convert the PyTorch mask to float to use 
 # mask = mask.type(torch.float32)
@@ -66,13 +68,16 @@ torch.cuda.synchronize()
 # Verify that the PyTorch SDPA's outputs are identical
 if torch.allclose(torch_out, o_csr, equal_nan = True):
     print("The SPFA-CSR results match PyTorch's.")
+else:
+    print("FAIL")
 
 print("Max difference from PyTorch (SPFA-CSR):", torch.max(o_csr - torch_out))
 print("Min difference from PyTorch (SPFA-CSR):", torch.min(o_csr - torch_out))
 
+
 # NOTE: Restrict the mask to int32
-mask_3 = mask_3.type(data_type)
-coo_mask = mask_3.to_sparse_coo()
+mask_2 = mask_2.type(data_type)
+coo_mask = mask_2.to_sparse_coo()
 w_row_ind = coo_mask.indices()[0].type(torch.uint64)
 w_col_ind = coo_mask.indices()[1].type(torch.uint32)
 w_val = coo_mask.values()
@@ -84,16 +89,94 @@ l = torch.zeros(Q, device = device, dtype = data_type)
 o_coo = spfa_coo.forward(q, k, v, w_row_ind, w_col_ind, w_val, m, l, o_coo)
 torch.cuda.synchronize()
 
-# Verify that the PyTorch SDPA's outputs are identical
+# Verify that the PyTorch SDPA's outputs are identical.
 if torch.allclose(torch_out, o_coo, equal_nan = True):
-    print("The SPFA-COO results match PyTorch's.")
+    print("The SPFA-COO results match PyTorch's (dense).")
+else:
+    print("FAIL")
 
-print("Max difference from PyTorch (SPFA-COO):", torch.max(o_coo - torch_out))
-print("Min difference from PyTorch (SPFA-COO):", torch.min(o_coo - torch_out))
+print("Max difference from dense PyTorch (SPFA-COO):", torch.max(o_coo - torch_out))
+print("Min difference from dense PyTorch (SPFA-COO):", torch.min(o_coo - torch_out))
 
-# Verify that the CSR and COO outputs are identical
+# Verify that the CSR and COO outputs are identical.
 if torch.allclose(o_csr, o_coo):
     print("The SPFA-CSR results match SPFA-COO's.")
+else:
+    print("FAIL")
+
+
+# Set the block size (note that the heigh/first dimension is always 1, these are slices 
+# as we parallelize along the sequence length axis).
+BLOCK_SIZE = 32
+
+# Setup the mask for the BSR format.
+mask_3 = mask_3.type(data_type)
+bsr_mask = mask_3.to_sparse_bsr(blocksize=(1, BLOCK_SIZE))
+w_block_row_off = bsr_mask.crow_indices().type(torch.uint64)
+w_block_col_ind = bsr_mask.col_indices().type(torch.uint32)
+w_val = bsr_mask.values()
+
+# New inputs (and output) for the BSR operation.
+o_bsr = torch.zeros([Q, D], device = device, dtype = data_type)
+m = torch.zeros(Q, device = device, dtype = data_type)
+l = torch.zeros(Q, device = device, dtype = data_type)
+
+# Perform the SPFA-BSR operation.
+o_bsr = spfa_bsr.forward(q, k, v, w_block_row_off, w_block_col_ind, w_val, m, l, o_bsr, BLOCK_SIZE)
+torch.cuda.synchronize()
+
+# Verify that the PyTorch SDPA's outputs are identical.
+if torch.allclose(torch_out, o_bsr, equal_nan = True):
+    print("The SPFA-Local results match PyTorch's.")
+else:
+    print("FAIL")
+
+print("Max difference from PyTorch (SPFA-BSR):", torch.max(o_bsr - torch_out))
+print("Min difference from PyTorch (SPFA-BSR):", torch.min(o_bsr - torch_out))
+
+# Verify that the Local and CSR outputs are identical, meaning COO as well.
+if torch.allclose(o_bsr, o_csr, equal_nan = True):
+    print("The SPFA-BSR results match SPFA-CSR's (and COO's).")
+else:
+    print("FAIL")
+
+# Setup for a non-dense operation where only regions of block size are masked or not. Please note that 
+# masking within a black that has non-zeros (True's) as well will not work with this implementation.
+for i in range(Q):
+    # This row is fully masked out.
+    mask_4[0][i] = False
+
+for i in range(BLOCK_SIZE):
+    # This row has some blocks masked and others not.
+    mask[2][i] = False
+    mask[2][i + (3 * BLOCK_SIZE)] = False
+
+# Calculate the PyTorch attention result.
+with sdpa_kernel(SDPBackend.MATH):
+    torch_out_bsr = torch.nn.functional.scaled_dot_product_attention(q, k, v, mask_4)
+    torch.cuda.synchronize()
+
+# Setup the mask for the BSR format.
+mask_4 = mask_4.type(data_type)
+bsr_mask = mask_4.to_sparse_bsr(blocksize=(1, BLOCK_SIZE))
+w_block_row_off = bsr_mask.crow_indices().type(torch.uint64)
+w_block_col_ind = bsr_mask.col_indices().type(torch.uint32)
+w_val = bsr_mask.values()
+
+# New inputs (and output) for the BSR operation.
+o_bsr_2 = torch.zeros([Q, D], device = device, dtype = data_type)
+m = torch.zeros(Q, device = device, dtype = data_type)
+l = torch.zeros(Q, device = device, dtype = data_type)
+
+# Perform the SPFA-BSR operation.
+o_bsr_2 = spfa_bsr.forward(q, k, v, w_block_row_off, w_block_col_ind, w_val, m, l, o_bsr_2, BLOCK_SIZE)
+torch.cuda.synchronize()
+
+# Verify that the PyTorch SDPA's outputs are identical.
+if torch.allclose(torch_out_bsr, o_bsr_2, equal_nan = True):
+    print("The SPFA-Local results match PyTorch's with a block sparse mask.")
+else:
+    print("FAIL")
 
 
 # Set the distance a token can look in either direction for local attention (fully dense).
@@ -108,16 +191,20 @@ l = torch.zeros(Q, device = device, dtype = data_type)
 o_local = spfa_local.forward(q, k, v, m, l, o_local, LOCAL_SIZE)
 torch.cuda.synchronize()
 
-# Verify that the PyTorch SDPA's outputs are identical
+# Verify that the PyTorch SDPA's outputs are identical.
 if torch.allclose(torch_out, o_local, equal_nan = True):
     print("The SPFA-Local results match PyTorch's.")
+else:
+    print("FAIL")
 
 print("Max difference from PyTorch (SPFA-Local):", torch.max(o_local - torch_out))
 print("Min difference from PyTorch (SPFA-Local):", torch.min(o_local - torch_out))
 
 # Verify that the Local and CSR outputs are identical, meaning COO as well.
 if torch.allclose(o_local, o_csr, equal_nan = True):
-    print("The SPFA-Local results match SPFA-CSR's (and COO's).")
+    print("The SPFA-Local results match SPFA-CSR's (and COO's and BSR's).")
+else:
+    print("FAIL")
 
 # Set the local size so that it is the identity matrix.
 IDENTITY = 0
@@ -132,6 +219,8 @@ torch.cuda.synchronize()
 # Verify that the Local output and v are identical (it multiplies the identity matrix).
 if torch.allclose(o_local_2, v, equal_nan = True):
     print("The SPFA-Local output #2 (total window size = 1, look ahead/back = 0) result matches v.")
+else:
+    print("FAIL")
 
 print("Max difference from V (SPFA-Local):", torch.max(o_local_2 - v))
 print("Min difference from V (SPFA-Local):", torch.min(o_local_2 - v))
