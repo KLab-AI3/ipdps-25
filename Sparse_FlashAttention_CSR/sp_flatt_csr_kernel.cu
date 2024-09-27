@@ -38,11 +38,11 @@ __global__ void spfa_csr_cuda_forward_kernel(
     intQuotient_ED += 1;
   }
 
-  // If the row is fully masked, then fill the output with 0.0's and end the iteration.
+  // If the row is fully masked, then fill the output with NaN's and end the iteration.
   // NOTE: Check if this is correct or if I should set it to another value.
   if (totNonMask == 0) {
     for (int i = 0; i < intQuotient_ED; i++) {
-      O[blockIdx.x][(blockDim.x * i) + threadIdx.x] = 0.0;
+      O[blockIdx.x][(blockDim.x * i) + threadIdx.x] = (scalar_t)NAN;
       // __syncthreads();
     }
 
