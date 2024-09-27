@@ -106,7 +106,7 @@ __global__ void spfa_csr_cuda_forward_kernel(
       maskElePerIter = numLastIter;
     }
 
-    // Bring a chunk of W's column index vector, K, and V into shared memory.
+    // Find the associated column index and bring K and V into shared memory.
     //// - W's value vector is overwritten the first iteration, so there is no need to read from HBM or initialize it to something.
     //// - K_shared is contiguous along the rows of K.
     //// - V_shared is contiguous along the columns of V.
