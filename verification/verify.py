@@ -2,6 +2,7 @@ import torch
 from torch.nn.attention import SDPBackend, sdpa_kernel
 import spfa_csr
 import spfa_coo
+import spfa_local
 
 import math
 import warnings
@@ -63,7 +64,7 @@ o_csr = spfa_csr.forward(q, k, v, w_row_off, w_col_ind, w_val, m, l, o_csr)
 torch.cuda.synchronize()
 
 # Verify that the PyTorch SDPA's outputs are identical
-if torch.allclose(torch_out, o_csr):
+if torch.allclose(torch_out, o_csr, equal_nan = True):
     print("The SPFA-CSR results match PyTorch's.")
 
 print("Max difference from PyTorch (SPFA-CSR):", torch.max(o_csr - torch_out))
@@ -84,7 +85,7 @@ o_coo = spfa_coo.forward(q, k, v, w_row_ind, w_col_ind, w_val, m, l, o_coo)
 torch.cuda.synchronize()
 
 # Verify that the PyTorch SDPA's outputs are identical
-if torch.allclose(torch_out, o_coo):
+if torch.allclose(torch_out, o_coo, equal_nan = True):
     print("The SPFA-COO results match PyTorch's.")
 
 print("Max difference from PyTorch (SPFA-COO):", torch.max(o_coo - torch_out))
@@ -93,5 +94,46 @@ print("Min difference from PyTorch (SPFA-COO):", torch.min(o_coo - torch_out))
 # Verify that the CSR and COO outputs are identical
 if torch.allclose(o_csr, o_coo):
     print("The SPFA-CSR results match SPFA-COO's.")
+
+
+# Set the distance a token can look in either direction for local attention (fully dense).
+LOCAL_SIZE = Q - 1
+
+# Set the new input tensors.
+o_local = torch.zeros([Q, D], device = device, dtype = data_type)
+m = torch.zeros(Q, device = device, dtype = data_type)
+l = torch.zeros(Q, device = device, dtype = data_type)
+
+# Run the SPFA-Local operation.
+o_local = spfa_local.forward(q, k, v, m, l, o_local, LOCAL_SIZE)
+torch.cuda.synchronize()
+
+# Verify that the PyTorch SDPA's outputs are identical
+if torch.allclose(torch_out, o_local, equal_nan = True):
+    print("The SPFA-Local results match PyTorch's.")
+
+print("Max difference from PyTorch (SPFA-Local):", torch.max(o_local - torch_out))
+print("Min difference from PyTorch (SPFA-Local):", torch.min(o_local - torch_out))
+
+# Verify that the Local and CSR outputs are identical, meaning COO as well.
+if torch.allclose(o_local, o_csr, equal_nan = True):
+    print("The SPFA-Local results match SPFA-CSR's (and COO's).")
+
+# Set the local size so that it is the identity matrix.
+IDENTITY = 0
+
+# Create a new output tensor.
+o_local_2 = torch.zeros([Q, D], device = device, dtype = data_type)
+
+# Run the SPFA-Local operation on new inputs.
+o_local_2 = spfa_local.forward(q, k, v, m, l, o_local_2, IDENTITY)
+torch.cuda.synchronize()
+
+# Verify that the Local output and v are identical (it multiplies the identity matrix).
+if torch.allclose(o_local_2, v, equal_nan = True):
+    print("The SPFA-Local output #2 (total window size = 1, look ahead/back = 0) result matches v.")
+
+print("Max difference from V (SPFA-Local):", torch.max(o_local_2 - v))
+print("Min difference from V (SPFA-Local):", torch.min(o_local_2 - v))
 
 print("Finished")
