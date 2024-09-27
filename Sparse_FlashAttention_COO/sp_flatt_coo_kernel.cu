@@ -30,8 +30,7 @@ __global__ void spfa_coo_cuda_forward_kernel(
   // Get pointers to the shared memory and reinterpret the pointer's data type.
   scalar_t* Q_shared = reinterpret_cast<scalar_t*>(sharedMem);
   scalar_t* O_shared = (scalar_t*)&Q_shared[Q.size(1)];
-  unsigned int* W_col_ind_shared = (unsigned int*)&O_shared[O.size(1)];
-  scalar_t* W_val_shared = (scalar_t*)&W_col_ind_shared[maskElePerIter];
+  scalar_t* W_val_shared = (scalar_t*)&O_shared[O.size(1)];
   scalar_t* K_shared = (scalar_t*)&W_val_shared[maskElePerIter];
   scalar_t* V_shared = (scalar_t*)&K_shared[maskElePerIter * K.size(1)];
   scalar_t* m_i = (scalar_t*)&V_shared[maskElePerIter * V.size(1)];
@@ -92,11 +91,11 @@ __global__ void spfa_coo_cuda_forward_kernel(
     intQuotient_ED += 1;
   }
 
-  // If the row is fully masked, then fill the output with Nan's and end the iteration.
+  // If the row is fully masked, then fill the output with 0.0's and end the iteration.
   // NOTE: Check if this is correct or if I should set it to another value.
   if (totNonMask == 0) {
     for (int i = 0; i < intQuotient_ED; i++) {
-      O[blockIdx.x][(blockDim.x * i) + threadIdx.x] = (scalar_t)NAN;
+      O[blockIdx.x][(blockDim.x * i) + threadIdx.x] = 0.0;
       // __syncthreads();
     }
 
@@ -142,15 +141,13 @@ __global__ void spfa_coo_cuda_forward_kernel(
       maskElePerIter = numLastIter;
     }
 
-    // Bring a chunk of W's column index vector, K, and V into shared memory.
+    // Find the associated column index and bring K and V into shared memory.
     //// - W's value vector is overwritten the first iteration, so there is no need to read from HBM or initialize it to something.
     //// - K_shared is contiguous along the rows of K.
     //// - V_shared is contiguous along the columns of V.
     if (threadIdx.x < maskElePerIter) {
-      W_col_ind_shared[threadIdx.x] = W_col_ind[lowInd[0] + threadIdx.x];
-
       // Store the column index of the mask so we don't have to fetch it each iteration below.
-      int col_ind = W_col_ind_shared[threadIdx.x];
+      int col_ind = W_col_ind[lowInd[0] + threadIdx.x];
 
       for (int i = 0; i < K.size(1); i++) {
         K_shared[(K.size(1) * threadIdx.x) + i] = K[col_ind][i];
@@ -287,11 +284,10 @@ torch::Tensor spfa_coo_cuda_forward(
   //// - (2 * embD * sizeof(Q.type())) -> (numerator) The amount of shared memory that storing Q and O will require.
   //// - (6 * sizeof(l.type())) -> The amount of shared memory that storing the softmax statistics will require.
   //// - (2 * sizeof(int)) -> The amount of shared memory required to store the starting and ending indices a row in the row index vector.
-  //// - sizeof(int) -> (restrict to int type) The amount of shared memory that storing the mask's column indices will require.
   //// - sizeof(W_val.type()) -> The amount of shared memory that storing the mask's values will require.
   //// - (2 * embD * sizeof(Q.type())) -> (denominator) The amount of shared memory that storing K and V will require.
   int maskElePerIter = floor((maxSMemPB - (2 * embD * sizeof(Q.type())) - (6 * sizeof(l.type())) - (2 * sizeof(int))) / 
-    (sizeof(int) + sizeof(W_val.type()) + (2 * embD * sizeof(Q.type()))));
+    (sizeof(W_val.type()) + (2 * embD * sizeof(Q.type()))));
 
   // If the number of mask elements per iteration is less than 1, then throw an error.
   if (maskElePerIter < 1) {
