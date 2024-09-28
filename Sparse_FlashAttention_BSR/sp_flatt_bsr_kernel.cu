@@ -78,20 +78,20 @@ __global__ void spfa_bsr_cuda_forward_kernel(
   scalar_t* l_ij = (scalar_t*)&l_i[1];
   scalar_t* l_new_i = (scalar_t*)&l_ij[1];
 
-  // Bring Q into shared memory.
-  //// - O is set to 0.0, meaning there is no need to read if from HBM.
+  // Bring Q and O into shared memory.
   for (int i = 0; i < intQuotient_ED; i++) {
     Q_shared[(blockDim.x * i) + threadIdx.x] = Q[blockIdx.x][(blockDim.x * i) + threadIdx.x];
-    O_shared[(blockDim.x * i) + threadIdx.x] = 0.0;
+    O_shared[(blockDim.x * i) + threadIdx.x] = O[blockIdx.x][(blockDim.x * i) + threadIdx.x];
     // __syncthreads();
   }
 
-  // Set the softmax statistics in shared memory.
+  // Move the softmax statistics into shared memory.
   //// - m is initialized with 0.0.
   //// - l is initialized with -inf.
+  //// - If they are set to something else in shared memory, then those values will be used.
   if (threadIdx.x == 0) {
-    m_i[0] = -(1.0 / 0.0);
-    l_i[0] = 0.0;
+    m_i[0] = m[blockIdx.x];
+    l_i[0] = l[blockIdx.x];
   }
 
   // Block until all threads are synchronized after the last operation.
@@ -215,6 +215,14 @@ __global__ void spfa_bsr_cuda_forward_kernel(
     __syncthreads();
 
   }
+
+  // Update the softmax statistics in HBM.
+  if (threadIdx.x == 0) {
+      m[blockIdx.x] = m_new_i[0];
+      l[blockIdx.x] = l_new_i[0];
+  }
+
+  __syncthreads();
 
   for (int i = 0; i < intQuotient_ED; i++) {
     O[blockIdx.x][(blockDim.x * i) + threadIdx.x] = O_shared[(blockDim.x * i) + threadIdx.x];

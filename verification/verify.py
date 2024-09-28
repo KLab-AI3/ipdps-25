@@ -59,7 +59,7 @@ w_col_ind = csr_mask.col_indices().type(torch.uint32)
 w_val = csr_mask.values()
 
 o_csr = torch.zeros([Q, D], device = device, dtype = data_type)
-m = torch.zeros(Q, device = device, dtype = data_type)
+m = torch.full([Q], -float("inf"), device = device, dtype = data_type)
 l = torch.zeros(Q, device = device, dtype = data_type)
 
 o_csr = spfa_csr.forward(q, k, v, w_row_off, w_col_ind, w_val, m, l, o_csr)
@@ -83,7 +83,7 @@ w_col_ind = coo_mask.indices()[1].type(torch.uint32)
 w_val = coo_mask.values()
 
 o_coo = torch.zeros([Q, D], device = device, dtype = data_type)
-m = torch.zeros(Q, device = device, dtype = data_type)
+m = torch.full([Q], -float("inf"), device = device, dtype = data_type)
 l = torch.zeros(Q, device = device, dtype = data_type)
 
 o_coo = spfa_coo.forward(q, k, v, w_row_ind, w_col_ind, w_val, m, l, o_coo)
@@ -118,7 +118,7 @@ w_val = bsr_mask.values()
 
 # New inputs (and output) for the BSR operation.
 o_bsr = torch.zeros([Q, D], device = device, dtype = data_type)
-m = torch.zeros(Q, device = device, dtype = data_type)
+m = torch.full([Q], -float("inf"), device = device, dtype = data_type)
 l = torch.zeros(Q, device = device, dtype = data_type)
 
 # Perform the SPFA-BSR operation.
@@ -165,7 +165,7 @@ w_val = bsr_mask.values()
 
 # New inputs (and output) for the BSR operation.
 o_bsr_2 = torch.zeros([Q, D], device = device, dtype = data_type)
-m = torch.zeros(Q, device = device, dtype = data_type)
+m = torch.full([Q], -float("inf"), device = device, dtype = data_type)
 l = torch.zeros(Q, device = device, dtype = data_type)
 
 # Perform the SPFA-BSR operation.
@@ -184,7 +184,7 @@ LOCAL_SIZE = Q - 1
 
 # Set the new input tensors.
 o_local = torch.zeros([Q, D], device = device, dtype = data_type)
-m = torch.zeros(Q, device = device, dtype = data_type)
+m = torch.full([Q], -float("inf"), device = device, dtype = data_type)
 l = torch.zeros(Q, device = device, dtype = data_type)
 
 # Run the SPFA-Local operation.
@@ -209,8 +209,10 @@ else:
 # Set the local size so that it is the identity matrix.
 IDENTITY = 0
 
-# Create a new output tensor.
+# Create a new output tensor and other new inputs.
 o_local_2 = torch.zeros([Q, D], device = device, dtype = data_type)
+m = torch.full([Q], -float("inf"), device = device, dtype = data_type)
+l = torch.zeros(Q, device = device, dtype = data_type)
 
 # Run the SPFA-Local operation on new inputs.
 o_local_2 = spfa_local.forward(q, k, v, m, l, o_local_2, IDENTITY)
