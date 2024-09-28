@@ -19,7 +19,8 @@ torch::Tensor spfa_coo_cuda_forward(
     torch::Tensor W_val,
     torch::Tensor m,
     torch::Tensor l,
-    torch::Tensor O
+    torch::Tensor O,
+    bool use_nan
 );
 
 
@@ -33,7 +34,8 @@ torch::Tensor spfa_coo_forward(
     torch::Tensor W_val,
     torch::Tensor m,
     torch::Tensor l,
-    torch::Tensor O
+    torch::Tensor O,
+    bool use_nan
 ) {
   // Verify each of the inputs.
   CHECK_INPUT(Q);
@@ -47,7 +49,7 @@ torch::Tensor spfa_coo_forward(
   CHECK_INPUT(O);
 
   // Return the result of the dispatch function.
-  return spfa_coo_cuda_forward(Q, K, V, W_row_ind, W_col_ind, W_val, m, l, O);
+  return spfa_coo_cuda_forward(Q, K, V, W_row_ind, W_col_ind, W_val, m, l, O, use_nan);
 }
 
 

@@ -20,7 +20,8 @@ torch::Tensor spfa_bsr_cuda_forward(
     torch::Tensor m,
     torch::Tensor l,
     torch::Tensor O, 
-    int block_length
+    int block_length,
+    bool use_nan
 );
 
 
@@ -35,7 +36,8 @@ torch::Tensor spfa_bsr_forward(
     torch::Tensor m,
     torch::Tensor l,
     torch::Tensor O,
-    int block_length
+    int block_length,
+    bool use_nan
 ) {
   // Verify each of the inputs.
   CHECK_INPUT(Q);
@@ -49,7 +51,7 @@ torch::Tensor spfa_bsr_forward(
   CHECK_INPUT(O);
 
   // Return the result of the dispatch function.
-  return spfa_bsr_cuda_forward(Q, K, V, W_block_row_off, W_block_col_ind, W_val, m, l, O, block_length);
+  return spfa_bsr_cuda_forward(Q, K, V, W_block_row_off, W_block_col_ind, W_val, m, l, O, block_length, use_nan);
 }
 
 

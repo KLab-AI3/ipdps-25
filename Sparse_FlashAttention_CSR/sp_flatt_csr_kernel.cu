@@ -22,6 +22,7 @@ __global__ void spfa_csr_cuda_forward_kernel(
     torch::PackedTensorAccessor64<scalar_t, 1, torch::RestrictPtrTraits> m,
     torch::PackedTensorAccessor64<scalar_t, 1, torch::RestrictPtrTraits> l,
     torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> O,
+    bool use_nan,
     int maskElePerIter
 ) {
   // Keep track of the lower and upper bound indices of the W column index and value vectors.
@@ -40,12 +41,13 @@ __global__ void spfa_csr_cuda_forward_kernel(
     intQuotient_ED += 1;
   }
 
-  // If the row is fully masked, then fill the output with 0.0's and end the iteration.
-  // NOTE: Check if this is correct or if I should set it to another value.
+  // If the row is fully masked, then either end the iteration or fill the output with NaN's (as specified by the user) and end the iteration.
   if (totNonMask == 0) {
-    for (int i = 0; i < intQuotient_ED; i++) {
-      O[blockIdx.x][(blockDim.x * i) + threadIdx.x] = (scalar_t)NAN;
-      // __syncthreads();
+    if (use_nan == true) {
+      for (int i = 0; i < intQuotient_ED; i++) {
+        O[blockIdx.x][(blockDim.x * i) + threadIdx.x] = (scalar_t)NAN;
+        // __syncthreads();
+      }
     }
 
     return;
@@ -228,7 +230,8 @@ torch::Tensor spfa_csr_cuda_forward(
     torch::Tensor W_val,
     torch::Tensor m,
     torch::Tensor l,
-    torch::Tensor O
+    torch::Tensor O,
+    bool use_nan
 ) {
   // Initialize the variables to hold the desired device attributes.
   //// - Max number of threads per block.
@@ -274,7 +277,8 @@ torch::Tensor spfa_csr_cuda_forward(
         W_val.packed_accessor64<scalar_t, 1, torch::RestrictPtrTraits>(),
         m.packed_accessor64<scalar_t, 1, torch::RestrictPtrTraits>(),
         l.packed_accessor64<scalar_t, 1, torch::RestrictPtrTraits>(),
-        O.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(), 
+        O.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+        use_nan,
         maskElePerIter
       );
   }));

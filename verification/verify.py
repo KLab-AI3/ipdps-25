@@ -3,6 +3,7 @@ from torch.nn.attention import SDPBackend, sdpa_kernel
 import spfa_bsr
 import spfa_csr
 import spfa_coo
+import spfa_global_no_local
 import spfa_local
 
 import math
@@ -39,6 +40,7 @@ mask = torch.rand((Q, Q), device = device, dtype = data_type) < DENSE_LEVEL
 mask_2 = torch.clone(mask)
 mask_3 = torch.clone(mask)
 mask_4 = torch.clone(mask)
+mask_5 = torch.clone(mask)
 
 # Convert the PyTorch mask to float to use 
 # mask = mask.type(torch.float32)
@@ -62,7 +64,7 @@ o_csr = torch.zeros([Q, D], device = device, dtype = data_type)
 m = torch.full([Q], -float("inf"), device = device, dtype = data_type)
 l = torch.zeros(Q, device = device, dtype = data_type)
 
-o_csr = spfa_csr.forward(q, k, v, w_row_off, w_col_ind, w_val, m, l, o_csr)
+o_csr = spfa_csr.forward(q, k, v, w_row_off, w_col_ind, w_val, m, l, o_csr, True)
 torch.cuda.synchronize()
 
 # Verify that the PyTorch SDPA's outputs are identical
@@ -86,7 +88,7 @@ o_coo = torch.zeros([Q, D], device = device, dtype = data_type)
 m = torch.full([Q], -float("inf"), device = device, dtype = data_type)
 l = torch.zeros(Q, device = device, dtype = data_type)
 
-o_coo = spfa_coo.forward(q, k, v, w_row_ind, w_col_ind, w_val, m, l, o_coo)
+o_coo = spfa_coo.forward(q, k, v, w_row_ind, w_col_ind, w_val, m, l, o_coo, True)
 torch.cuda.synchronize()
 
 # Verify that the PyTorch SDPA's outputs are identical.
@@ -122,7 +124,7 @@ m = torch.full([Q], -float("inf"), device = device, dtype = data_type)
 l = torch.zeros(Q, device = device, dtype = data_type)
 
 # Perform the SPFA-BSR operation.
-o_bsr = spfa_bsr.forward(q, k, v, w_block_row_off, w_block_col_ind, w_val, m, l, o_bsr, BLOCK_SIZE)
+o_bsr = spfa_bsr.forward(q, k, v, w_block_row_off, w_block_col_ind, w_val, m, l, o_bsr, BLOCK_SIZE, True)
 torch.cuda.synchronize()
 
 # Verify that the PyTorch SDPA's outputs are identical.
@@ -169,7 +171,7 @@ m = torch.full([Q], -float("inf"), device = device, dtype = data_type)
 l = torch.zeros(Q, device = device, dtype = data_type)
 
 # Perform the SPFA-BSR operation.
-o_bsr_2 = spfa_bsr.forward(q, k, v, w_block_row_off, w_block_col_ind, w_val, m, l, o_bsr_2, BLOCK_SIZE)
+o_bsr_2 = spfa_bsr.forward(q, k, v, w_block_row_off, w_block_col_ind, w_val, m, l, o_bsr_2, BLOCK_SIZE, True)
 torch.cuda.synchronize()
 
 # Verify that the PyTorch SDPA's outputs are identical.
@@ -226,5 +228,96 @@ else:
 
 print("Max difference from V (SPFA-Local):", torch.max(o_local_2 - v))
 print("Min difference from V (SPFA-Local):", torch.min(o_local_2 - v))
+
+
+# Create an empty mask to hold the global attention (and anti-local).
+mask_g = torch.full((Q, Q), False, device = device, dtype = torch.bool)
+
+# Specify the global tokens.
+globs = [0, 1, 10, 40]
+
+# Bring the token list to the GPU.
+globs = torch.Tensor(globs).cuda()
+globs = globs.type(torch.int32)
+
+# Mark tokens as masked.
+for i in globs:
+    mask_g[i, :] = True
+    mask_g[:, i] = True
+
+# Create a window of size 10.
+WINDOW = 10
+
+# Adjust for the non-local attention.
+for i in range(Q):
+    left_bound = max(0, i - WINDOW)
+    right_bound = min(Q, i + WINDOW) + 1
+    mask_g[i][left_bound:right_bound] = False
+
+# Calculate the PyTorch attention result.
+with sdpa_kernel(SDPBackend.MATH):
+    torch_out = torch.nn.functional.scaled_dot_product_attention(q, k, v, mask_g)
+    torch.cuda.synchronize()
+
+# Setup the buffers.
+o_glob = torch.zeros([Q, D], device = device, dtype = data_type)
+m = torch.full([Q], -float("inf"), device = device, dtype = data_type)
+l = torch.zeros(Q, device = device, dtype = data_type)
+
+# Launch the global (non-local) kernel.
+o = spfa_global_no_local.forward(q, k, v, m, l, o_glob, globs, WINDOW)
+torch.cuda.synchronize()
+
+# Verify that we match the PyTorch output for glboal (non-local) attention.
+if torch.allclose(torch_out, o_glob):
+    print("Global (non-local) attention matches PyTorch.")
+else:
+    print("FAIL")
+
+# Print out the extrema differences.
+print("Max difference from PyTorch (SPFA-Global (non-local)):", torch.max(o_glob - torch_out))
+print("Min difference from PyTorch (SPFA-Global (non-local)):", torch.min(o_glob - torch_out))
+
+# Create the opposite mask in order to include all non-masked areas.
+mask_g2 = torch.where(mask_g == True, False, mask_5)
+
+# Calculate the PyTorch attention result.
+with sdpa_kernel(SDPBackend.MATH):
+    torch_out = torch.nn.functional.scaled_dot_product_attention(q, k, v, mask_5)
+    torch.cuda.synchronize()
+
+# Create the buffers.
+o_glob2 = torch.zeros([Q, D], device = device, dtype = data_type)
+m = torch.full([Q], -float("inf"), device = device, dtype = data_type)
+l = torch.zeros(Q, device = device, dtype = data_type)
+
+# Rune the local attention.
+o_glob2 = spfa_local.forward(q, k, v, m, l, o_glob2, WINDOW)
+torch.cuda.synchronize()
+
+# Run the global (non-local) attention.
+o_glob2 = spfa_global_no_local.forward(q, k, v, m, l, o_glob2, globs, WINDOW)
+torch.cuda.synchronize()
+
+# Create the CSR mask.
+mask_g2 = mask_g2.type(data_type)
+csr_mask = mask_g2.to_sparse_csr()
+w_row_off = csr_mask.crow_indices().type(torch.uint64)
+w_col_ind = csr_mask.col_indices().type(torch.uint32)
+w_val = csr_mask.values()
+
+# Run the random attention using CSR form.
+o_glob2 = spfa_csr.forward(q, k, v, w_row_off, w_col_ind, w_val, m, l, o_glob2, False)
+torch.cuda.synchronize()
+
+# Verify that we match the PyTorch output for BigBird attention.
+if torch.allclose(torch_out, o_glob2, atol = 1e-1):
+    print("BigBird attention matches PyTorch.")
+else:
+    print("FAIL")
+
+# Print out the extrema differences.
+print("Max difference from PyTorch (BigBird Attention):", torch.max(o_glob2 - torch_out))
+print("Min difference from PyTorch (BigBird Attention):", torch.min(o_glob2 - torch_out))
 
 print("Finished")
