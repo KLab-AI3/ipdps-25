@@ -282,7 +282,7 @@ torch::Tensor spfa_bsr_cuda_forward(
 
   // Dispatcher that handles launching the correctly typed function from the generic implementation.
   AT_DISPATCH_FLOATING_TYPES_AND_HALF(Q.type(), "spfa_bsr_forward_cuda", ([&] {
-    spfa_bsr_cuda_forward_kernel<scalar_t><<<blocks, 256, maxSMemPB>>>(
+    spfa_bsr_cuda_forward_kernel<scalar_t><<<blocks, threads, maxSMemPB>>>(
         Q.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
         K.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
         V.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
